@@ -6,4 +6,3 @@ pillow
 python-multipart
 opencv-python
 tensorflow==2.13.0
-tf-keras
