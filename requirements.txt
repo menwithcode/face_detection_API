@@ -5,4 +5,5 @@ numpy
 pillow
 python-multipart
 opencv-python
-tensorflow
+tensorflow==2.13.0
+tf-keras
