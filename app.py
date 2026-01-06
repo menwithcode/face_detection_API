@@ -8,14 +8,16 @@ from fastapi import FastAPI, File, UploadFile
 from deepface import DeepFace
 
 # =====================================================
-# CONFIG
+# PATH CONFIG (VERY IMPORTANT FOR DOCKER)
 # =====================================================
-PKL_PATH = "student_embeddings.pkl"   # must be in same folder
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+PKL_PATH = os.path.join(BASE_DIR, "student_embeddings.pkl")
+
 MODEL_NAME = "Facenet512"
 THRESHOLD = 0.58
 
 # =====================================================
-# FASTAPI APP (THIS IS VERY IMPORTANT)
+# FASTAPI APP
 # =====================================================
 app = FastAPI(
     title="Face Recognition API",
@@ -27,7 +29,7 @@ app = FastAPI(
 # UTILITY FUNCTIONS
 # =====================================================
 def cosine_similarity(a, b):
-    return np.dot(a, b) / (norm(a) * norm(b))
+    return float(np.dot(a, b) / (norm(a) * norm(b)))
 
 
 def l2_normalize(x):
@@ -35,10 +37,10 @@ def l2_normalize(x):
 
 
 # =====================================================
-# LOAD EMBEDDINGS ONCE (AT STARTUP)
+# LOAD EMBEDDINGS ONCE (SAFE)
 # =====================================================
 if not os.path.exists(PKL_PATH):
-    raise FileNotFoundError(f"{PKL_PATH} not found")
+    raise FileNotFoundError(f"❌ student_embeddings.pkl not found at {PKL_PATH}")
 
 with open(PKL_PATH, "rb") as f:
     db = pickle.load(f)
@@ -46,25 +48,30 @@ with open(PKL_PATH, "rb") as f:
 print(f"✅ Loaded {len(db)} student embeddings")
 
 # =====================================================
-# HEALTH CHECK
+# HEALTH CHECK (RENDER FRIENDLY)
 # =====================================================
 @app.get("/")
-def home():
-    return {"status": "Face Recognition API is running"}
+def health():
+    return {
+        "status": "running",
+        "model": MODEL_NAME,
+        "students_loaded": len(db)
+    }
 
 # =====================================================
 # FACE RECOGNITION ENDPOINT
 # =====================================================
 @app.post("/recognize")
 async def recognize_face(file: UploadFile = File(...)):
-
-    # Save uploaded image temporarily
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as temp:
-        temp.write(await file.read())
-        img_path = temp.name
+    img_path = None
 
     try:
-        # Extract face embedding
+        # Save uploaded image to temp file
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp:
+            tmp.write(await file.read())
+            img_path = tmp.name
+
+        # Extract embedding (lazy call)
         result = DeepFace.represent(
             img_path=img_path,
             model_name=MODEL_NAME,
@@ -78,8 +85,8 @@ async def recognize_face(file: UploadFile = File(...)):
         best_score = -1.0
 
         # Compare with database
-        for name, emb in db.items():
-            score = cosine_similarity(emb, test_emb)
+        for name, db_emb in db.items():
+            score = cosine_similarity(db_emb, test_emb)
             if score > best_score:
                 best_score = score
                 best_match = name
@@ -88,8 +95,8 @@ async def recognize_face(file: UploadFile = File(...)):
 
         return {
             "student": best_match,
-            "similarity": round(float(best_score), 4),
-            "cosine_distance": round(float(1 - best_score), 4),
+            "similarity": round(best_score, 4),
+            "cosine_distance": round(1 - best_score, 4),
             "decision": decision
         }
 
@@ -97,6 +104,6 @@ async def recognize_face(file: UploadFile = File(...)):
         return {"error": str(e)}
 
     finally:
-        # Clean up temp file
-        if os.path.exists(img_path):
+        # Always clean temp file
+        if img_path and os.path.exists(img_path):
             os.remove(img_path)
